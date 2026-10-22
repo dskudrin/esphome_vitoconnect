@@ -34,6 +34,7 @@ OptolinkKW::OptolinkKW(uart::UARTDevice* uart) :
   Optolink(uart),
   _state(UNDEF),
   _lastMillis(0),
+  _requestStartMillis(0),
   _write(false),
   _rcvBuffer{0},
   _rcvBufferLen(0),
@@ -64,8 +65,14 @@ void OptolinkKW::loop() {
     // begin() not called
     break;
   }
-  if (_queue.size() > 0 && millis() - _lastMillis > 5000UL) {  // if no ACK is coming, reset connection
+  if (_queue.size() > 0 && _requestStartMillis != 0 &&
+      millis() - _requestStartMillis > 5000UL) {
+    OptolinkDP* dp = _queue.front();
+    ESP_LOGW(TAG, "Timeout %s datapoint 0x%04X after 5000 ms, skipping",
+             dp->write ? "writing" : "reading", dp->address);
     _tryOnError(TIMEOUT);
+    _requestStartMillis = 0;
+    _rcvBufferLen = 0;
     _state = INIT;
     _uart->flush();
   }
@@ -142,6 +149,9 @@ void OptolinkKW::_send() {
   }
   _rcvBufferLen = 0;
   _lastMillis = millis();
+  if (_requestStartMillis == 0) {
+    _requestStartMillis = _lastMillis;
+  }
   _state = RECEIVE;
 }
 
@@ -155,6 +165,7 @@ void OptolinkKW::_receive() {
     OptolinkDP* dp = _queue.front();
     ESP_LOGD(TAG, "Adding data to datapoint with address %x and received length %d", dp->address, _rcvBufferLen);
     _tryOnData(_rcvBuffer, _rcvBufferLen);
+    _requestStartMillis = 0;
     _state = IDLE;
     _lastMillis = millis();
     return;
