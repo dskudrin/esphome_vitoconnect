@@ -91,7 +91,9 @@ void OptolinkKW::_init() {
   const uint32_t now = millis();
 
   if (_uart->available()) {
-    if (_uart->peek() == 0x05) {
+    const int incoming = _uart->peek();
+
+    if (incoming == 0x05) {
       if (_initResetAttempts > 0) {
         ESP_LOGI(TAG, "KW sync recovered after %u reset attempt(s)", _initResetAttempts);
       }
@@ -100,9 +102,24 @@ void OptolinkKW::_init() {
       _lastMillis = now;
       _state = IDLE;
       _idle();
-    } else {
-      _uart->read();
+      return;
     }
+
+    // Diagnostic recovery: while we are deliberately silent in a backoff
+    // window, an incoming 0x04 cannot be an echo of our own reset byte.
+    // 0x04 and 0x05 differ only in bit 0, so on a marginal optical link a
+    // periodic ENQ (0x05) may be decoded as 0x04. Try exactly one queued KW
+    // transaction using that byte as a degraded sync indication.
+    if (_initBackoffUntil != 0 && incoming == 0x04 && _queue.size() > 0) {
+      _uart->read();  // consume the degraded sync byte
+      ESP_LOGW(TAG, "KW diagnostic: treating RX 0x04 during quiet backoff as degraded 0x05 sync");
+      _lastMillis = now;
+      _state = SYNC;
+      _sync();
+      return;
+    }
+
+    _uart->read();
     return;
   }
 
