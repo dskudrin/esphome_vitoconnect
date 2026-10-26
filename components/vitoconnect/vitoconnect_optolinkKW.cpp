@@ -34,6 +34,9 @@ OptolinkKW::OptolinkKW(uart::UARTDevice* uart) :
   Optolink(uart),
   _state(UNDEF),
   _lastMillis(0),
+  _lastInitResetMillis(0),
+  _initResetAttempts(0),
+  _initBackoffUntil(0),
   _write(false),
   _rcvBuffer{0},
   _rcvBufferLen(0),
@@ -41,6 +44,10 @@ OptolinkKW::OptolinkKW(uart::UARTDevice* uart) :
 
 void OptolinkKW::begin() {
   _state = INIT;
+  _lastMillis = millis();
+  _lastInitResetMillis = 0;
+  _initResetAttempts = 0;
+  _initBackoffUntil = 0;
 }
 
 void OptolinkKW::loop() {
@@ -64,27 +71,62 @@ void OptolinkKW::loop() {
     // begin() not called
     break;
   }
-  if (_queue.size() > 0 && millis() - _lastMillis > 5000UL) {  // if no ACK is coming, reset connection
+  if (_queue.size() > 0 && millis() - _lastMillis > 5000UL) {  // if no protocol progress is made, reset connection
+    ESP_LOGW(TAG, "KW timeout: no protocol progress for 5s, dropping current request and resyncing");
     _tryOnError(TIMEOUT);
     _state = INIT;
     _uart->flush();
+    _lastMillis = millis();
+    _lastInitResetMillis = 0;
+    _initResetAttempts = 0;
+    _initBackoffUntil = 0;
   }
   // TODO(@bertmelis): move timeouts here, clear queue on timeout
 }
 
 void OptolinkKW::_init() {
+  const uint32_t now = millis();
+
   if (_uart->available()) {
     if (_uart->peek() == 0x05) {
+      if (_initResetAttempts > 0) {
+        ESP_LOGI(TAG, "KW sync recovered after %u reset attempt(s)", _initResetAttempts);
+      }
+      _initResetAttempts = 0;
+      _initBackoffUntil = 0;
+      _lastMillis = now;
       _state = IDLE;
       _idle();
     } else {
       _uart->read();
     }
-  } else {
-    if (millis() - _lastMillis > 1000UL) {  // try to reset if Vitotronic is in a connected state with the P300 protocol
-      _lastMillis = millis();
-      const uint8_t buff[] = {0x04};
-      _uart->write_array(buff, sizeof(buff));
+    return;
+  }
+
+  // After five unsuccessful reset bytes, stop transmitting for 3 seconds.
+  // This gives the Vitotronic a quiet window to return to its normal KW sync state.
+  if (_initBackoffUntil != 0) {
+    if ((int32_t) (now - _initBackoffUntil) < 0) {
+      return;
+    }
+    ESP_LOGD(TAG, "KW sync backoff finished, retrying");
+    _initBackoffUntil = 0;
+    _initResetAttempts = 0;
+    _lastInitResetMillis = 0;
+  }
+
+  // Keep the 0x04 reset cadence independent from _lastMillis.
+  // _lastMillis tracks real protocol progress and must not be refreshed merely
+  // because we transmitted another reset byte.
+  if (now - _lastInitResetMillis > 1000UL) {
+    _lastInitResetMillis = now;
+    const uint8_t buff[] = {0x04};
+    _uart->write_array(buff, sizeof(buff));
+    ++_initResetAttempts;
+
+    if (_initResetAttempts >= 5) {
+      ESP_LOGW(TAG, "KW sync not acquired after %u reset attempts, backing off for 3s", _initResetAttempts);
+      _initBackoffUntil = now + 3000UL;
     }
   }
 }
