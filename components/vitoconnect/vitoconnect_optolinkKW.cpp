@@ -37,6 +37,7 @@ OptolinkKW::OptolinkKW(uart::UARTDevice* uart) :
   _lastInitResetMillis(0),
   _initResetAttempts(0),
   _initBackoffUntil(0),
+  _degradedSync(false),
   _write(false),
   _rcvBuffer{0},
   _rcvBufferLen(0),
@@ -48,6 +49,7 @@ void OptolinkKW::begin() {
   _lastInitResetMillis = 0;
   _initResetAttempts = 0;
   _initBackoffUntil = 0;
+  _degradedSync = false;
 }
 
 void OptolinkKW::loop() {
@@ -94,11 +96,12 @@ void OptolinkKW::_init() {
     const int incoming = _uart->peek();
 
     if (incoming == 0x05) {
-      if (_initResetAttempts > 0) {
-        ESP_LOGI(TAG, "KW sync recovered after %u reset attempt(s)", _initResetAttempts);
+      if (_initResetAttempts > 0 || _degradedSync) {
+        ESP_LOGI(TAG, "KW sync recovered with valid 0x05");
       }
       _initResetAttempts = 0;
       _initBackoffUntil = 0;
+      _degradedSync = false;
       _lastMillis = now;
       _state = IDLE;
       _idle();
@@ -112,7 +115,10 @@ void OptolinkKW::_init() {
     // transaction using that byte as a degraded sync indication.
     if (_initBackoffUntil != 0 && incoming == 0x04 && _queue.size() > 0) {
       _uart->read();  // consume the degraded sync byte
-      ESP_LOGW(TAG, "KW diagnostic: treating RX 0x04 during quiet backoff as degraded 0x05 sync");
+      if (!_degradedSync) {
+        ESP_LOGW(TAG, "KW fallback enabled: RX 0x04 behaves like degraded 0x05 sync");
+      }
+      _degradedSync = true;
       _lastMillis = now;
       _state = SYNC;
       _sync();
@@ -153,14 +159,25 @@ void OptolinkKW::_init() {
 
 void OptolinkKW::_idle() {
   if (_uart->available()) {
-    if (_uart->read() == 0x05) {
+    const uint8_t incoming = _uart->read();
+
+    if (incoming == 0x05) {
+      if (_degradedSync) {
+        ESP_LOGI(TAG, "KW fallback disabled: valid 0x05 sync restored");
+      }
+      _degradedSync = false;
       _lastMillis = millis();
       if (_queue.size() > 0) {
         _state = SYNC;
       }
+    } else if (_degradedSync && incoming == 0x04 && _queue.size() > 0) {
+      // Once degraded mode has been proven by a successful transaction,
+      // keep accepting the periodic 0x04 as sync until a real 0x05 returns.
+      ESP_LOGD(TAG, "KW fallback: using RX 0x04 as sync");
+      _lastMillis = millis();
+      _state = SYNC;
     } else {
       ESP_LOGD(TAG, "Received unexpected data");
-      // received something unexpected
     }
   } else if ((_queue.size() > 0) && (millis() - _lastMillis < 10UL)) {  // don't wait for 0x05 sync signal, send directly after last request
     _state = SEND;
