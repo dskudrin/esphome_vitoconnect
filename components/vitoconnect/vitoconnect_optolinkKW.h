@@ -85,6 +85,9 @@ class OptolinkKW : public Optolink {
   void _send();
   void _receive();
   uint32_t _lastMillis;
+  uint32_t _lastInitResetMillis;
+  uint8_t _initResetAttempts;
+  uint32_t _initBackoffUntil;
   bool _write;
   uint8_t _rcvBuffer[MAX_DP_LENGTH];
   size_t _rcvBufferLen;
