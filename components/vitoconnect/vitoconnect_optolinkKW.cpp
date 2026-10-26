@@ -106,7 +106,7 @@ void OptolinkKW::_init() {
     return;
   }
 
-  // After five unsuccessful reset bytes, stop transmitting for 3 seconds.
+  // After five unsuccessful reset bytes, stop transmitting for 30 seconds.
   // This gives the Vitotronic a quiet window to return to its normal KW sync state.
   if (_initBackoffUntil != 0) {
     if ((int32_t) (now - _initBackoffUntil) < 0) {
@@ -128,8 +128,8 @@ void OptolinkKW::_init() {
     ++_initResetAttempts;
 
     if (_initResetAttempts >= 5) {
-      ESP_LOGW(TAG, "KW sync not acquired after %u reset attempts, backing off for 3s", _initResetAttempts);
-      _initBackoffUntil = now + 3000UL;
+      ESP_LOGW(TAG, "KW sync not acquired after %u reset attempts, backing off for 30s", _initResetAttempts);
+      _initBackoffUntil = now + 30000UL;
     }
   }
 }
