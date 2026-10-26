@@ -71,7 +71,10 @@ void OptolinkKW::loop() {
     // begin() not called
     break;
   }
-  if (_queue.size() > 0 && millis() - _lastMillis > 5000UL) {  // if no protocol progress is made, reset connection
+  // Do not apply the generic request timeout while we are already in INIT.
+  // INIT has its own sync/backoff recovery. Resetting it here would cancel the
+  // quiet backoff window and make us hammer 0x04 forever.
+  if (_state != INIT && _queue.size() > 0 && millis() - _lastMillis > 5000UL) {
     ESP_LOGW(TAG, "KW timeout: no protocol progress for 5s, dropping current request and resyncing");
     _tryOnError(TIMEOUT);
     _state = INIT;
