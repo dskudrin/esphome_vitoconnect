@@ -37,6 +37,8 @@ OptolinkKW::OptolinkKW(uart::UARTDevice* uart) :
   _lastInitResetMillis(0),
   _initResetAttempts(0),
   _initBackoffUntil(0),
+  _txPauseActive(false),
+  _txPauseUntil(0),
   _write(false),
   _rcvBuffer{0},
   _rcvBufferLen(0),
@@ -48,9 +50,51 @@ void OptolinkKW::begin() {
   _lastInitResetMillis = 0;
   _initResetAttempts = 0;
   _initBackoffUntil = 0;
+  _txPauseActive = false;
+  _txPauseUntil = 0;
+}
+
+void OptolinkKW::pause_tx(uint32_t duration_ms) {
+  const uint32_t now = millis();
+  _txPauseActive = true;
+  _txPauseUntil = now + duration_ms;
+
+  // Stop any in-progress transaction without power-cycling the ESP. Keep the
+  // request queue intact so it can resume after the diagnostic quiet period.
+  _state = INIT;
+  _rcvBufferLen = 0;
+  memset(_rcvBuffer, 0, sizeof(_rcvBuffer));
+  _lastMillis = now;
+  _lastInitResetMillis = 0;
+  _initResetAttempts = 0;
+  _initBackoffUntil = 0;
+
+  ESP_LOGW(TAG, "KW TX pause started for %u seconds; UART RX remains active", duration_ms / 1000UL);
 }
 
 void OptolinkKW::loop() {
+  if (_txPauseActive) {
+    const uint32_t now = millis();
+
+    // Drain RX so the UART buffer cannot overflow. uart_debug still records
+    // these incoming bytes, which lets us observe Vitotronic during silence.
+    while (_uart->available()) {
+      _uart->read();
+    }
+
+    if ((int32_t) (now - _txPauseUntil) < 0) {
+      return;
+    }
+
+    _txPauseActive = false;
+    _txPauseUntil = 0;
+    _state = INIT;
+    _lastMillis = now;
+    _lastInitResetMillis = 0;
+    _initResetAttempts = 0;
+    _initBackoffUntil = 0;
+    ESP_LOGW(TAG, "KW TX pause finished; resuming normal sync");
+  }
   switch (_state) {
   case INIT:
     _init();
