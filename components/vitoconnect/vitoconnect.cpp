@@ -67,8 +67,27 @@ void VitoConnect::loop() {
     _optolink->loop();
 }
 
+void VitoConnect::pause_kw_tx(uint32_t duration_ms) {
+  if (this->protocol.compare("KW") != 0 || _optolink == nullptr) {
+    ESP_LOGW(TAG, "KW TX pause requested, but active protocol is not KW");
+    return;
+  }
+  static_cast<OptolinkKW*>(_optolink)->pause_tx(duration_ms);
+}
+
+bool VitoConnect::is_kw_tx_paused() const {
+  if (this->protocol.compare("KW") != 0 || _optolink == nullptr) {
+    return false;
+  }
+  return static_cast<OptolinkKW*>(_optolink)->is_tx_paused();
+}
+
 void VitoConnect::update() {
   // This will be called every "update_interval" milliseconds.
+  if (this->is_kw_tx_paused()) {
+    ESP_LOGD(TAG, "Skipping sensor update while KW TX pause is active");
+    return;
+  }
   ESP_LOGD(TAG, "Schedule sensor update");
 
   // prioritize writes over reads
