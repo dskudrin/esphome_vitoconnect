@@ -70,6 +70,15 @@ class OptolinkKW : public Optolink {
    */
   void loop();
 
+  /**
+   * @brief Temporarily suppress all TX traffic while keeping UART RX active.
+   *
+   * Used for diagnostics to determine whether the Vitotronic KW interface can
+   * recover after an extended quiet period without power-cycling the ESP.
+   */
+  void pause_tx(uint32_t duration_ms);
+  bool is_tx_paused() const { return _txPauseActive; }
+
  private:
   enum OptolinkState : uint8_t {
     INIT,
@@ -88,6 +97,8 @@ class OptolinkKW : public Optolink {
   uint32_t _lastInitResetMillis;
   uint8_t _initResetAttempts;
   uint32_t _initBackoffUntil;
+  bool _txPauseActive;
+  uint32_t _txPauseUntil;
   bool _write;
   uint8_t _rcvBuffer[MAX_DP_LENGTH];
   size_t _rcvBufferLen;
