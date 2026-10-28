@@ -52,6 +52,8 @@ class VitoConnect : public uart::UARTDevice, public PollingComponent {
 
     void set_protocol(std::string protocol) { this->protocol = protocol; }
     void register_datapoint(Datapoint *datapoint);
+    void pause_kw_tx(uint32_t duration_ms);
+    bool is_kw_tx_paused() const;
 
     void onData(std::function<void(const uint8_t* data, uint8_t length, Datapoint* dp)> callback);
     void onError(std::function<void(uint8_t, Datapoint*)> callback);
